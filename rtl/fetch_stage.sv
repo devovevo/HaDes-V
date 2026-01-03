@@ -5,8 +5,6 @@
  * File: fetch_stage.sv
  */
 
-
-
 module fetch_stage (
     input logic clk,
     input logic rst,
@@ -25,6 +23,61 @@ module fetch_stage (
 );
 
     // TODO: Delete the following line and implement this module.
-    ref_fetch_stage golden(.*);
+    // ref_fetch_stage golden(.*);
+
+    pipeline_status::forwards_t status_forwards;
+
+    reg [31:0] pc;
+    reg [31:0] pc_out;
+    reg [31:0] instruction;
+    bit cyc = 1'b1;
+
+    assign wb.cyc = cyc;
+    assign wb.stb = cyc;
+    assign wb.we  = 1'b0;
+    assign wb.sel = 4'b1111;
+    assign wb.adr = pc[31:2];  // Convert byte address to word address for wishbone
+    assign wb.dat_mosi = 32'b0;
+
+    assign instruction_reg_out     = instruction;
+    assign program_counter_reg_out = pc_out;
+    assign status_forwards_out     = status_forwards;
+
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            // cyc <= 1'b0;
+            status_forwards <= pipeline_status::BUBBLE;
+            pc <= constants::RESET_ADDRESS;  // Store as byte address
+            pc_out <= constants::RESET_ADDRESS;
+        end else begin
+            case (status_backwards_in)
+                pipeline_status::JUMP: begin
+                    // cyc <= 1'b0;
+                    pc <= jump_address_backwards_in;
+                    pc_out <= pc;  // Output current PC (next sequential) during jump cycle
+                    status_forwards <= pipeline_status::BUBBLE;
+                end
+                pipeline_status::STALL: begin
+                    // cyc <= 1'b0;
+                end
+                pipeline_status::READY: begin
+                    // cyc <= 1'b1;
+                    if (wb.ack) begin
+                        instruction <= wb.dat_miso;
+                        pc_out <= pc;
+                        status_forwards <= pipeline_status::VALID;
+                    end else if (wb.err) begin
+                        status_forwards <= pipeline_status::FETCH_FAULT;
+                    end else begin
+                        status_forwards <= pipeline_status::BUBBLE;
+                    end
+
+                    if (wb.ack || wb.err) begin
+                        pc <= pc + 4;
+                    end
+                end
+            endcase
+        end
+    end
 
 endmodule

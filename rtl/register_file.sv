@@ -21,7 +21,16 @@ module register_file (
     input  logic        write_enable
 );
 
-    // TODO: Delete the following line and implement this module.
-    ref_register_file golden(.*);
+    // 32 RISC-V registers, 32 bits each
+    reg [31:0] file [31:0];
+
+    assign read_data1 = file[read_address1];
+    assign read_data2 = file[read_address2];
+
+    always_ff @(posedge clk) begin
+        if (write_enable && write_address != 0) begin
+            file[write_address] <= write_data;
+        end
+    end
 
 endmodule
