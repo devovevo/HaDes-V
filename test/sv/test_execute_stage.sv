@@ -604,6 +604,73 @@ module test_execute_stage;
         if (!compare_outputs("CSRRWI")) fail_test("Test 42 failed.");
 
         // =====================================================
+        // Additional CSR tests
+        // =====================================================
+        // Test 42a: CSRRW to MTVEC then dependent ADDI
+        instruction_in = make_instr(op::CSRRW, .rd(5'd3), .rs1(5'd1));
+        instruction_in.csr = csr::MTVEC;
+        rs1_data_in = 32'h0000_1000; // new mtvec value
+        program_counter_in = 32'h0004_00A8;
+        status_forwards_in = pipeline_status::VALID;
+        status_backwards_in = pipeline_status::READY;
+        @(posedge clk); #1;
+        log_state("Test 42a: CSRRW to MTVEC");
+        if (!compare_outputs("CSRRW_MTVEC")) fail_test("Test 42a failed.");
+
+        // Dependent instruction: ADDI x4, x3, 1  (uses rd from CSRRW)
+        instruction_in = make_instr(op::ADDI, .rd(5'd4), .rs1(5'd3), .imm(32'd1));
+        program_counter_in = 32'h0004_00AC;
+        @(posedge clk); #1;
+        log_state("Test 42b: ADDI x4, x3, 1 (depends on CSRRW_MTVEC)");
+        if (!compare_outputs("CSRRW_MTVEC+ADDI")) fail_test("Test 42b failed.");
+
+        // Test 42c: CSRRS read MSCRATCH into rd
+        instruction_in = make_instr(op::CSRRS, .rd(5'd5), .rs1(5'd0));
+        instruction_in.csr = csr::MSCRATCH;
+        program_counter_in = 32'h0004_00B0;
+        @(posedge clk); #1;
+        log_state("Test 42c: CSRRS MSCRATCH (read into rd)");
+        if (!compare_outputs("CSRRS_MSCRATCH")) fail_test("Test 42c failed.");
+
+        // Test 42d: CSRRWI to MTVEC (immediate write)
+        instruction_in = make_instr(op::CSRRWI, .rd(5'd6), .imm(32'd1));
+        instruction_in.csr = csr::MTVEC;
+        program_counter_in = 32'h0004_00B4;
+        @(posedge clk); #1;
+        log_state("Test 42d: CSRRWI MTVEC zimm=1");
+        if (!compare_outputs("CSRRWI_MTVEC")) fail_test("Test 42d failed.");
+
+        // Dependent: ADDI x7, x6, 2
+        instruction_in = make_instr(op::ADDI, .rd(5'd7), .rs1(5'd6), .imm(32'd2));
+        program_counter_in = 32'h0004_00B8;
+        @(posedge clk); #1;
+        log_state("Test 42e: ADDI x7, x6, 2 (depends on CSRRWI_MTVEC)");
+        if (!compare_outputs("CSRRWI_MTVEC+ADDI")) fail_test("Test 42e failed.");
+
+        // Test 42f: CSRRW while STALL asserted to observe hold/propagation
+        instruction_in = make_instr(op::CSRRW, .rd(5'd3), .rs1(5'd1));
+        instruction_in.csr = csr::MSTATUS;
+        program_counter_in = 32'h0004_00BC;
+        status_forwards_in = pipeline_status::VALID;
+        status_backwards_in = pipeline_status::STALL;
+        @(posedge clk); #1;
+        log_state("Test 42f: CSRRW while STALL asserted");
+
+        // Change inputs while STALL is asserted
+        instruction_in = make_instr(op::ADDI, .rd(5'd0), .rs1(5'd0), .imm(32'd10));
+        program_counter_in = 32'h0004_00C0;
+        status_backwards_in = pipeline_status::STALL;
+        @(posedge clk); #1;
+        log_state("Test 42g: Inputs changed during STALL");
+        if (!compare_outputs("CSR_STALL_EXEC")) fail_test("Test 42f failed.");
+
+        // Release STALL and ensure recovery
+        status_backwards_in = pipeline_status::READY;
+        @(posedge clk); #1;
+        log_state("Test 42h: Recovery after STALL during CSR");
+        if (!compare_outputs("CSR_STALL_RECOVER_EXEC")) fail_test("Test 42 recovery failed.");
+
+        // =====================================================
         // Test 43: Pipeline STALL
         // =====================================================
         instruction_in = make_instr(op::ADD, .rd(5'd3), .rs1(5'd1), .rs2(5'd2));

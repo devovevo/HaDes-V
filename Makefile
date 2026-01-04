@@ -16,7 +16,7 @@ CC = /opt/riscv32i/bin/riscv32-unknown-elf-gcc
 OBJCOPY = /opt/riscv32i/bin/riscv32-unknown-elf-objcopy
 OBJDUMP = /opt/riscv32i/bin/riscv32-unknown-elf-objdump
 
-XILINX_VIVADO ?= /opt/Xilinx/Vivado/2023.2/
+XILINX_VIVADO ?= /tools/Xilinx/2025.2/Vivado
 VIVADO ?= $(XILINX_VIVADO)/bin/vivado
 
 # Directories
@@ -72,11 +72,29 @@ clean::
 ################################################################################
 
 MODE ?= batch
+BOARD ?= basys3
+
+# Board Configuration
+ifeq ($(BOARD), zybo-z7-10)
+    PART      := xc7z010clg400-1
+    XDC_FILE  := synth/zybo_z7.xdc
+    BOARD_DEF := BOARD_ZYBO
+else ifeq ($(BOARD), zybo-z7-20)
+    PART      := xc7z020clg400-1
+    XDC_FILE  := synth/zybo_z7.xdc
+    BOARD_DEF := BOARD_ZYBO
+else
+    # Default to Basys 3
+    PART      := xc7a35tcpg236-1
+    XDC_FILE  := synth/basys3.xdc
+    BOARD_DEF := BOARD_BASYS3
+endif
 
 .PHONY: synthesis
 synthesis: $(BUILD_DIR)/$(C_DIR)/bootloader/init.mem
 	@ mkdir -p $(BUILD_DIR)/$(SYNTH_DIR)
-	cd $(BUILD_DIR)/$(SYNTH_DIR) && $(VIVADO) -mode $(MODE) -source $(CURDIR)/$(SYNTH_DIR)/synth.tcl
+	# We pass PART, XDC_FILE, and BOARD_DEF to the Tcl script as arguments
+	cd $(BUILD_DIR)/$(SYNTH_DIR) && $(VIVADO) -mode $(MODE) -source $(CURDIR)/$(SYNTH_DIR)/synth.tcl -tclargs $(PART) $(CURDIR)/$(XDC_FILE) $(BOARD_DEF)
 
 ################################################################################
 #                                  Simulation                                  #

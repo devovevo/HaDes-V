@@ -395,6 +395,89 @@ module test_decode_stage;
         log_state("Test 20b: Recovery from STALL");
         if (!compare_outputs("STALL_RECOVER")) fail_test("Test 20 failed.");
 
+        // =====================================================
+        // Test 21: CSRRW then dependent ADDI - observe bubbles/stalls
+        // CSRRW x3, csr=0x300 (mstatus), rs1=x2
+        instruction_in = 32'h300111F3; // CSRRW x3, csr=0x300, rs1=x2
+        program_counter_in = 32'h00000050;
+        status_forwards_in = pipeline_status::VALID;
+        status_backwards_in = pipeline_status::READY;
+        @(posedge clk); #1;
+        log_state("Test 21a: CSRRW x3, csr=0x001, rs1=x2");
+        if (!compare_outputs("CSRRW")) fail_test("Test 21a failed.");
+
+        // Dependent instruction: ADDI x4, x3, 1  (reads rd=x3)
+        instruction_in = 32'h00118213; // ADDI x4, x3, 1
+        program_counter_in = 32'h00000054;
+        status_forwards_in = pipeline_status::VALID;
+        status_backwards_in = pipeline_status::READY;
+        @(posedge clk); #1;
+        log_state("Test 21b: ADDI x4, x3, 1 (depends on CSRRW result)");
+        if (!compare_outputs("CSRRW+ADDI")) fail_test("Test 21b failed.");
+
+        // =====================================================
+        // Test 22: CSRRS (read CSR into rd) then a NOP - check behavior
+        // CSRRS x3, csr=0x300, rs1=x0  (reads CSR only)
+        instruction_in = 32'h300021F3; // CSRRS x3, csr=0x300, rs1=x0
+        program_counter_in = 32'h00000058;
+        status_forwards_in = pipeline_status::VALID;
+        status_backwards_in = pipeline_status::READY;
+        @(posedge clk); #1;
+        log_state("Test 22a: CSRRS x3, csr=0x300, rs1=x0");
+        if (!compare_outputs("CSRRS")) fail_test("Test 22a failed.");
+
+        instruction_in = 32'h00000013; // NOP
+        program_counter_in = 32'h0000005C;
+        status_forwards_in = pipeline_status::VALID;
+        status_backwards_in = pipeline_status::READY;
+        @(posedge clk); #1;
+        log_state("Test 22b: NOP after CSRRS");
+        if (!compare_outputs("CSRRS+NOP")) fail_test("Test 22b failed.");
+
+        // =====================================================
+        // Test 23: CSRRWI (immediate) then dependent ADDI
+        // CSRRWI x5, csr=0x305, zimm=1  (write immediate to CSR, rd gets old CSR)
+        instruction_in = 32'h3050AAF3; // CSRRWI x5, csr=0x305, zimm=1
+        program_counter_in = 32'h00000060;
+        status_forwards_in = pipeline_status::VALID;
+        status_backwards_in = pipeline_status::READY;
+        @(posedge clk); #1;
+        log_state("Test 23a: CSRRWI x5, csr=0x305, zimm=1");
+        if (!compare_outputs("CSRRWI")) fail_test("Test 23a failed.");
+
+        // Dependent: ADDI x6, x5, 2
+        instruction_in = 32'h00228313; // ADDI x6, x5, 2
+        program_counter_in = 32'h00000064;
+        status_forwards_in = pipeline_status::VALID;
+        status_backwards_in = pipeline_status::READY;
+        @(posedge clk); #1;
+        log_state("Test 23b: ADDI x6, x5, 2 (depends on CSRRWI result)");
+        if (!compare_outputs("CSRRWI+ADDI")) fail_test("Test 23b failed.");
+
+        // =====================================================
+        // Test 24: Insert STALL during CSR to see hold/propagation
+        instruction_in = 32'h300111F3; // CSRRW x3, csr=0x300, rs1=x2
+        program_counter_in = 32'h00000068;
+        status_forwards_in = pipeline_status::VALID;
+        status_backwards_in = pipeline_status::STALL;
+        @(posedge clk); #1;
+        log_state("Test 24a: CSRRW while STALL asserted");
+
+        // Now change inputs while STALL is asserted (REF may hold)
+        instruction_in = 32'h00A00013; // ADDI x0, x0, 10 (different)
+        program_counter_in = 32'h0000006C;
+        status_forwards_in = pipeline_status::VALID;
+        status_backwards_in = pipeline_status::STALL;
+        @(posedge clk); #1;
+        log_state("Test 24b: Inputs changed during STALL");
+        if (!compare_outputs("CSR_STALL")) fail_test("Test 24 failed.");
+
+        // Release STALL and ensure recovery
+        status_backwards_in = pipeline_status::READY;
+        @(posedge clk); #1;
+        log_state("Test 24c: Recovery after STALL during CSR");
+        if (!compare_outputs("CSR_STALL_RECOVER")) fail_test("Test 24 recovery failed.");
+
         repeat(2) begin
             @(posedge clk);
             #1;

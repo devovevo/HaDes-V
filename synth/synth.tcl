@@ -4,6 +4,26 @@
 # ---------------------------------------------------------------------
 # File: synth.tcl
 
+# ---------------------------------------------------------------------
+# 1. Parse Arguments (ADDED)
+# ---------------------------------------------------------------------
+if { $argc != 3 } {
+    puts "Error: Invalid number of arguments."
+    puts "Usage: vivado -mode batch -source synth.tcl -tclargs <PART> <XDC_PATH> <BOARD_DEFINE>"
+    exit 1
+}
+
+set TARGET_PART  [lindex $argv 0]
+set XDC_FILE     [lindex $argv 1]
+set BOARD_DEFINE [lindex $argv 2]
+
+puts "------------------------------------------------"
+puts "  Synthesis Configuration"
+puts "  Part:  $TARGET_PART"
+puts "  XDC:   $XDC_FILE"
+puts "  Board: $BOARD_DEFINE"
+puts "------------------------------------------------"
+
 # Get root directory
 set ROOT [file normalize [file dirname [info script]]/..]
 
@@ -55,14 +75,20 @@ foreach source $SOURCES {
     read_verilog -sv [glob -directory $ROOT $source]
 }
 
-# Read constraints
-read_xdc $ROOT/synth/basys3.xdc
+# ---------------------------------------------------------------------
+# 2. Read Constraints (DYNAMIC)
+# ---------------------------------------------------------------------
+read_xdc $XDC_FILE
 
 # Read memory file
 read_mem $ROOT/build/test/c/bootloader/init.mem
 
-# Synthesize and Optimize
-synth_design -top top -part xc7a35tcpg236-1
+# ---------------------------------------------------------------------
+# 3. Synthesize (DYNAMIC)
+# ---------------------------------------------------------------------
+# We pass the board define (e.g. BOARD_ZYBO=1) to the Verilog compiler
+synth_design -top top -part $TARGET_PART -verilog_define ${BOARD_DEFINE}=1
+
 opt_design
 
 # Synthesis reports

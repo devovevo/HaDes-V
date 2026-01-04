@@ -36,7 +36,7 @@ module fetch_stage (
     assign wb.stb = cyc;
     assign wb.we  = 1'b0;
     assign wb.sel = 4'b1111;
-    assign wb.adr = pc[31:2];  // Convert byte address to word address for wishbone
+    assign wb.adr = {2'b0, pc[31:2]};  // Convert byte address to word address for wishbone
     assign wb.dat_mosi = 32'b0;
 
     assign instruction_reg_out     = instruction;
@@ -57,9 +57,6 @@ module fetch_stage (
                     pc_out <= pc;  // Output current PC (next sequential) during jump cycle
                     status_forwards <= pipeline_status::BUBBLE;
                 end
-                pipeline_status::STALL: begin
-                    // cyc <= 1'b0;
-                end
                 pipeline_status::READY: begin
                     // cyc <= 1'b1;
                     if (wb.ack) begin
@@ -75,6 +72,9 @@ module fetch_stage (
                     if (wb.ack || wb.err) begin
                         pc <= pc + 4;
                     end
+                end
+                default: begin
+                    // Nothing for now
                 end
             endcase
         end

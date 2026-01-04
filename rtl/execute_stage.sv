@@ -1,119 +1,3 @@
-/* File: add.sv */
-module add (
-    input  logic [31:0] a_i,
-    input  logic [31:0] b_i,
-    input  logic        is_sub_i,
-    output logic [31:0] sum_o,
-    output logic        carry_o,
-    output logic        overflow_o,
-    output logic        zero_o
-);
-    logic [31:0] b_mod;
-    logic [32:0] sum_ext;
-
-    assign b_mod      = is_sub_i ? ~b_i : b_i;
-    // Adder with Carry-In (is_sub_i acts as +1 for 2's complement subtraction)
-    assign sum_ext    = {1'b0, a_i} + {1'b0, b_mod} + {32'b0, is_sub_i};
-    assign sum_o      = sum_ext[31:0];
-
-    assign zero_o     = (sum_o == 32'b0);
-    assign carry_o    = sum_ext[32];
-    // Overflow = (Operands have same sign) AND (Result has different sign)
-    assign overflow_o = (~(a_i[31] ^ b_mod[31]) & (a_i[31] ^ sum_ext[31]));
-
-endmodule
-
-
-/* File: shift.sv */
-module shift (
-    input  logic [31:0] a_i,
-    input  logic [4:0]  shamt_i,
-    input  logic        right_i,
-    input  logic        arith_i,
-    output logic [31:0] shft_o
-);
-    always_comb begin
-        if (right_i) begin
-            if (arith_i) 
-                shft_o = $signed(a_i) >>> shamt_i;
-            else 
-                shft_o = a_i >> shamt_i;
-        end else begin
-            shft_o = a_i << shamt_i;
-        end
-    end
-endmodule
-
-/* File: branch_unit.sv */
-module branch_unit (
-    input  instruction::t instruction_i,
-    input  logic [31:0]   pc_i,
-    input  logic [31:0]   alu_result_i,   // From main ALU (rs1-rs2 for branches, rs1+imm for JALR)
-    input  logic          alu_carry_i,    // Carry out from ALU subtraction
-    input  logic          alu_overflow_i, // Overflow from ALU subtraction  
-    input  logic          alu_zero_i,     // Zero flag from ALU
-    
-    output logic          branch_taken_o,
-    output logic [31:0]   target_address_o,
-    output logic          misaligned_o    // Target address is not 4-byte aligned
-);
-
-    // --- 1. Condition Logic (Should we branch?) ---
-    // Derive all comparison results from ALU subtraction (rs1 - rs2)
-    // When ALU computes rs1 - rs2:
-    //   EQ:  zero
-    //   NE:  !zero  
-    //   LT:  sign XOR overflow (signed)
-    //   GE:  !(sign XOR overflow) (signed)
-    //   LTU: !carry (unsigned, borrow = no carry)
-    //   GEU: carry (unsigned)
-    logic beq, bne, blt, bge, bltu, bgeu;
-    logic sign;
-    
-    assign sign = alu_result_i[31];
-    assign beq  = alu_zero_i;
-    assign bne  = ~alu_zero_i;
-    assign blt  = sign ^ alu_overflow_i;
-    assign bge  = ~(sign ^ alu_overflow_i);
-    assign bltu = ~alu_carry_i;
-    assign bgeu = alu_carry_i;
-
-    always_comb begin
-        case (instruction_i.op)
-            op::JAL, op::JALR: branch_taken_o = 1'b1;
-            op::BEQ:           branch_taken_o = beq;
-            op::BNE:           branch_taken_o = bne;
-            op::BLT:           branch_taken_o = blt;
-            op::BGE:           branch_taken_o = bge;
-            op::BLTU:          branch_taken_o = bltu;
-            op::BGEU:          branch_taken_o = bgeu;
-            default:           branch_taken_o = 1'b0;
-        endcase
-    end
-
-    // --- 2. Target Calculation (Where do we go?) ---
-    // Dedicated adder to calculate PC + Imm in parallel with Main ALU.
-    // This allows us to output the target address even if the Main ALU is doing something else.
-    logic [31:0] pc_plus_imm;
-    assign pc_plus_imm = pc_i + instruction_i.immediate;
-
-    always_comb begin
-        if (instruction_i.op == op::JALR) begin
-            // JALR target is RS1 + Imm (calculated by Main ALU)
-            // Do NOT clear LSB here - detect misalignment instead
-            target_address_o = alu_result_i;
-        end else begin
-            // For JAL, BRANCH, and AUIPC.
-            // Also leaks "PC + Imm" for other instructions to match reference behavior.
-            target_address_o = pc_plus_imm;
-        end
-    end
-
-    // Misalignment detection: target must be 4-byte aligned when branch is taken
-    assign misaligned_o = branch_taken_o && (target_address_o[1:0] != 2'b00);
-
-endmodule
-
 /* File: execute_stage.sv */
 module execute_stage (
     input logic clk,
@@ -152,7 +36,6 @@ module execute_stage (
     // --- 1. Operand Muxing (Updated for JALR) ---
     always_comb begin : operand_mux
         // Default A: rs1
-        a_op = rs1_data_inn; 
         case (instruction_in.op)
             op::AUIPC: a_op = program_counter_in;
             op::JAL:   a_op = program_counter_in;
@@ -186,17 +69,17 @@ module execute_stage (
     
     logic alu_carry, alu_overflow, alu_zero;
     add alu_add (
-        .a_i      (a_op),
-        .b_i      (b_op),
-        .is_sub_i (is_sub),
-        .sum_o    (add_result),
-        .carry_o  (alu_carry), 
-        .overflow_o (alu_overflow), 
-        .zero_o   (alu_zero) 
+        .a_in           (a_op),
+        .b_in           (b_op),
+        .neg_b_in       (is_sub),
+        .sum_out        (add_result),
+        .carry_out      (alu_carry), 
+        .overflow_out   (alu_overflow), 
+        .zero_out       (alu_zero) 
     );
 
     shift alu_shift (
-        .a_i      (a_op),
+        .a_in      (a_op),
         .shamt_i  (b_op[4:0]),
         .right_i  (instruction_in.op == op::SRL || instruction_in.op == op::SRA || 
                    instruction_in.op == op::SRLI || instruction_in.op == op::SRAI),
@@ -334,9 +217,6 @@ module execute_stage (
                         source_data_reg_out      <= source_data;
                         rd_data_reg_out          <= rd_data;
                     end
-                    pipeline_status::STALL: begin
-                        // Hold
-                    end
                     pipeline_status::JUMP: begin
                         // Squash - set BUBBLE status but still update data registers
                         status_forwards          <= pipeline_status::BUBBLE;
@@ -346,7 +226,9 @@ module execute_stage (
                         source_data_reg_out      <= source_data;
                         rd_data_reg_out          <= rd_data;
                     end
-                    default: status_forwards <= pipeline_status::BUBBLE;
+                    default: begin
+                        // Hold all outputs - do nothing
+                    end
                 endcase
             end else begin
                 // BUBBLE or other non-VALID status: still update all registers

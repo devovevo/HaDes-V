@@ -30,9 +30,6 @@ module decode_stage (
     input  logic [31:0] jump_address_backwards_in,
     output logic [31:0] jump_address_backwards_out
 );
-
-    // TODO: Delete the following line and implement this module.
-
     instruction::t instruction_out;
 
     instruction_decoder decoder (
@@ -51,7 +48,7 @@ module decode_stage (
         .read_data1(rs1_data_reg_file),
         .read_address2(instruction_out.rs2_address),
         .read_data2(rs2_data_reg_file),
-        // write port - drive directly from wb_forwarding to avoid 1-cycle delay
+        // write port
         .write_address(wb_forwarding_in.address),
         .write_data(wb_forwarding_in.data),
         .write_enable(wb_forwarding_in.data_valid)
@@ -73,8 +70,39 @@ module decode_stage (
 
     // Combinational pass-through for backwards signals
     assign jump_address_backwards_out = jump_address_backwards_in;
-    assign status_backwards_out = status_backwards_in;
 
+    // -------------------------------------------------------------------------
+    // Hazard Detection Logic
+    // -------------------------------------------------------------------------
+    logic hazard_stall;
+
+    always_comb begin
+        hazard_stall = 1'b0;
+
+        // Check RS1 Forwarding Hazard (GPR only)
+        if (instruction_out.rs1_address != 5'b0) begin
+            if (instruction_out.rs1_address == exe_forwarding_in.address && !exe_forwarding_in.data_valid) begin
+                hazard_stall = 1'b1;
+            end else if (instruction_out.rs1_address == mem_forwarding_in.address && !mem_forwarding_in.data_valid) begin
+                hazard_stall = 1'b1;
+            end
+        end
+
+        // Check RS2 Forwarding Hazard (GPR only)
+        if (instruction_out.rs2_address != 5'b0) begin
+            if (instruction_out.rs2_address == exe_forwarding_in.address && !exe_forwarding_in.data_valid) begin
+                hazard_stall = 1'b1;
+            end else if (instruction_out.rs2_address == mem_forwarding_in.address && !mem_forwarding_in.data_valid) begin
+                hazard_stall = 1'b1;
+            end
+        end
+    end
+    
+    assign status_backwards_out = hazard_stall ? pipeline_status::STALL : status_backwards_in;
+
+    // -------------------------------------------------------------------------
+    // Forwarding Logic (Data Path)
+    // -------------------------------------------------------------------------
     logic [31:0] rs1_data_next;
 
     always_comb begin
@@ -84,8 +112,6 @@ module decode_stage (
                 rs1_data_next = exe_forwarding_in.data;
             end else if (instruction_out.rs1_address == mem_forwarding_in.address && mem_forwarding_in.data_valid) begin
                 rs1_data_next = mem_forwarding_in.data;
-            end else if (instruction_out.rs1_address == wb_forwarding_in.address && wb_forwarding_in.data_valid) begin
-                rs1_data_next = wb_forwarding_in.data;
             end
         end
     end
@@ -99,12 +125,13 @@ module decode_stage (
                 rs2_data_next = exe_forwarding_in.data;
             end else if (instruction_out.rs2_address == mem_forwarding_in.address && mem_forwarding_in.data_valid) begin
                 rs2_data_next = mem_forwarding_in.data;
-            end else if (instruction_out.rs2_address == wb_forwarding_in.address && wb_forwarding_in.data_valid) begin
-                rs2_data_next = wb_forwarding_in.data;
             end
         end
     end
 
+    // -------------------------------------------------------------------------
+    // Pipeline Registers
+    // -------------------------------------------------------------------------
     always_ff @(posedge clk) begin
         if (rst) begin
             rs1_data_reg <= 32'b0;
@@ -117,26 +144,28 @@ module decode_stage (
             if (status_forwards_in == pipeline_status::VALID) begin
                 case (status_backwards_in)
                     pipeline_status::READY: begin
-                        // Update instruction and PC registers
-                        instruction_reg <= instruction_out;
-                        program_counter_reg <= program_counter_in;
-
-                        rs1_data_reg <= rs1_data_next;
-                        rs2_data_reg <= rs2_data_next;
-
-                        // Update status
-                        if (instruction_out.op == op::ECALL) begin
-                            status_forwards <= pipeline_status::ECALL;
-                        end else if (instruction_out.op == op::EBREAK) begin
-                            status_forwards <= pipeline_status::EBREAK;
-                        end else if (instruction_out.op == op::ILLEGAL) begin
-                            status_forwards <= pipeline_status::ILLEGAL_INSTRUCTION;
+                        if (hazard_stall) begin
+                            instruction_reg <= instruction::NOP;
+                            status_forwards <= pipeline_status::BUBBLE;
                         end else begin
-                            status_forwards <= pipeline_status::VALID;
+                            // Update instruction and PC registers
+                            instruction_reg <= instruction_out;
+                            program_counter_reg <= program_counter_in;
+
+                            rs1_data_reg <= rs1_data_next;
+                            rs2_data_reg <= rs2_data_next;
+
+                            // Update status
+                            if (instruction_out.op == op::ECALL) begin
+                                status_forwards <= pipeline_status::ECALL;
+                            end else if (instruction_out.op == op::EBREAK) begin
+                                status_forwards <= pipeline_status::EBREAK;
+                            end else if (instruction_out.op == op::ILLEGAL) begin
+                                status_forwards <= pipeline_status::ILLEGAL_INSTRUCTION;
+                            end else begin
+                                status_forwards <= pipeline_status::VALID;
+                            end
                         end
-                    end
-                    pipeline_status::STALL: begin
-                        // Hold all outputs - do nothing
                     end
                     pipeline_status::JUMP: begin
                         // Squash - insert bubble
@@ -149,12 +178,11 @@ module decode_stage (
                         status_forwards <= pipeline_status::BUBBLE;
                     end
                     default: begin
-                        status_forwards <= pipeline_status::BUBBLE;
+                        // Nothing
                     end
                 endcase
             end else begin
                 // Propagate non-valid status (BUBBLE from previous stage)
-                // Still update PC/instruction (data is ignored due to non-valid status)
                 instruction_reg <= instruction_out;
                 program_counter_reg <= program_counter_in;
                 status_forwards <= status_forwards_in;
